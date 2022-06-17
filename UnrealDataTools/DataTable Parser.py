@@ -1,5 +1,6 @@
 import json
 import csv
+import re
 
 
 
@@ -35,6 +36,38 @@ def get_type(json_file):
         print(f'File type is {Type}')
         return Type
 
+def import_mapper(json_file):
+    with open(json_file) as json_data:
+        data = json.load(json_data)['Imports']
+    #remove keys $type and ClassPackage from data
+    for i in data:
+        del i['$type']
+        del i['ClassPackage']
+    #make a dict from data with keys as outerindex and value as objectname
+    data_dict = {}
+    num_idx = 1
+    for i in data:
+        data_dict[(num_idx * -1)] = i['OuterIndex']
+        num_idx += 1
+
+    #make a dict from data with keys as length from start of list and value as objectname
+    data_dict2 = {}
+    num_idx = 1
+    for i in data:
+        data_dict2[(num_idx * -1)] = i['ObjectName']
+        num_idx += 1
+    return data_dict, data_dict2
+
+def import_interpreter(dict1, dict2, obj_idx):
+    #get object name from dict2
+    obj_name = dict2[obj_idx]
+    #get object index from dict1
+    package_idx = dict1[obj_idx]
+    package_path = dict2[package_idx]
+    full_path = package_path + '.' + obj_name
+    #print(f'{obj_name} imported as {full_path}')
+    return full_path
+
 
 
 
@@ -42,7 +75,7 @@ def datatable_to_csv(json_file,Output):
     with open(json_file) as json_data:
         json_data = json.load(json_data)['Exports']
         print('Json Loaded')
-
+    dict1, dict2 = import_mapper(json_file)
     #Removes unwanted keys
     json_data = key_cleanse(json_data, ['Table','','',''])
     #only gets json_data after key "Data"
@@ -77,6 +110,15 @@ def datatable_to_csv(json_file,Output):
         for key in i:
             for name in i[key]:
                 Values2.append(name)
+    #if entry in Values2 is more than 1 character long, add it to new list
+    ValuesCleaned = []
+    for i in Values2:
+        if len(i) > 1:
+            ValuesCleaned.append(i)
+    Values2 = ValuesCleaned
+    #print(Values2[7])
+
+
     #if name is in entry in list Values2 add it to new list
     collumn_names = ['Names',]
     for i in Values2:
@@ -89,29 +131,161 @@ def datatable_to_csv(json_file,Output):
         if len(collumn_names[i]) > 36:
             entry_length = (len(collumn_names[i])-36)
             collumn_names[i] = collumn_names[i][:entry_length]
-    #Gets stat values from Values2
-    Stats_entries = []
+    #if $type is in entry in list Values2, add it to new list
+    collumn_types_dirty = []
+    collumn_types = []
     for i in Values2:
-        if 'Value' in i:
-            Stats_entries.append(i['Value'])
-    #change objects in list to strings
-    for i in range(len(Stats_entries)):
-        Stats_entries[i] = str(Stats_entries[i])
-    #Truncate all values to 6 cahracters
-    for i in range(len(Stats_entries)):
-        Stats_entries[i] = Stats_entries[i][:6]
-    #Round all values to 2 decimal places
-    for i in range(len(Stats_entries)):
-        Stats_entries[i] = round(float(Stats_entries[i]),2)
-    #change objects in list to strings # Im actually not sure whats going on here but i don't question it
-    for i in range(len(Stats_entries)):
-        Stats_entries[i] = str(Stats_entries[i])
-    #if entry does not have a '+' or '-' add '+' to the front
-    for i in range(len(Stats_entries)):
-        if '+' not in Stats_entries[i] and '-' not in Stats_entries[i]:
-            Stats_entries[i] = '+' + Stats_entries[i]
-    #group entries into lists of 3
-    Stats_entries = [Stats_entries[i:i+3] for i in range(0, len(Stats_entries), 3)]
+        if '$type' in i:
+            collumn_types_dirty.append(i['$type'])
+    for j in collumn_types_dirty:
+        if 'StructTypes.' in j:
+            collumn_types.append('StructPropertyData')
+            #print('StructPropertyData')
+        else:
+            clean_entry = (re.search(r'(?<=UAssetAPI\.PropertyTypes\.)[^,]*(?=, UAssetAPI)', j).group(0))
+        #print(f'collumn type entry: {clean_entry}')
+            collumn_types.append(clean_entry)
+    #print(collumn_types)
+
+    #print(Values2)
+
+    if len(collumn_types) != len(Values2):
+        print('Error: Collumn names and collumn types are not the same length')
+        print(f'Values2 length: {len(Values2)}')
+        print(f'Collumn types length: {len(collumn_types)}')
+        exit()
+    Stats_entries = []
+    num_of_iterations = 0
+    FloatProperties = 0
+    TextProperties = 0
+    BoolProperties = 0
+    SoftObjectProperties = 0
+    ObjectProperties = 0
+    ArrayProperties = 0
+    NameProperties = 0
+    VectorProperties = 0
+    RotatorProperties = 0
+    strProperties = 0
+    IntProperties = 0
+    for k in collumn_types:
+        if k == 'FloatPropertyData':
+            if 'Value' in Values2[num_of_iterations]:
+                   dataentry = str(Values2[num_of_iterations]['Value'])
+            dataentry = dataentry[:6]
+            dataentry = round(float(dataentry),2)
+            dataentry = str(dataentry)
+            if '+' not in dataentry and '-' not in dataentry:
+                dataentry = '+' + dataentry
+            Stats_entries.append(dataentry)
+            num_of_iterations += 1
+            FloatProperties += 1
+        if k == 'TextPropertyData':
+            s = str(Values2[num_of_iterations])
+            infokeys = (re.findall(r'(?<=\')[^\']\w*(?=\'\:)', s))
+            for i in infokeys:
+                if 'Value' not in i and '$type' not in i and 'Flags' not in i and 'HistoryType' not in i and 'Namespace' not in i and 'DuplicationIndex' not in i and 'Name' not in i:
+                    textkey = str(i)
+            if textkey in Values2[num_of_iterations]:
+                    Stats_entries.append(Values2[num_of_iterations][textkey])
+            num_of_iterations += 1
+            TextProperties += 1
+        if k == 'BoolPropertyData':
+            if 'Value' in Values2[num_of_iterations]:
+                    Stats_entries.append(Values2[num_of_iterations]['Value'])
+            num_of_iterations += 1
+            BoolProperties += 1
+        if k == 'SoftObjectPropertyData':
+            if 'Value' in Values2[num_of_iterations]:
+                    Stats_entries.append(Values2[num_of_iterations]['Value'])
+            num_of_iterations += 1
+            SoftObjectProperties += 1
+        if k == 'ObjectPropertyData':
+            if 'Value' in Values2[num_of_iterations]:
+                    obj_path = import_interpreter(dict1, dict2, int(Values2[num_of_iterations]['Value']))
+                    Stats_entries.append(obj_path)
+            num_of_iterations += 1
+            ObjectProperties += 1
+        if k == 'NamePropertyData':
+            if 'Value' in Values2[num_of_iterations]:
+                    Stats_entries.append(Values2[num_of_iterations]['Value'])
+            num_of_iterations += 1
+            NameProperties += 1
+        if k == 'StrPropertyData':
+            if 'Value' in Values2[num_of_iterations]:
+                    Stats_entries.append(Values2[num_of_iterations]['Value'])
+            num_of_iterations += 1
+            strProperties += 1
+        if k == 'IntPropertyData':
+            if 'Value' in Values2[num_of_iterations]:
+                    Stats_entries.append(Values2[num_of_iterations]['Value'])
+            num_of_iterations += 1
+            IntProperties += 1
+        if k == 'VectorPropertyData':
+            Stats_entries.append('N/A')
+            num_of_iterations += 1
+            VectorProperties += 1
+        if k == 'RotatorPropertyData':
+            Stats_entries.append('N/A')
+            num_of_iterations += 1
+            RotatorProperties += 1
+        if k == 'StructPropertyData':
+            Stats_entries.append('Struct')
+            num_of_iterations += 1
+        if k == 'ArrayPropertyData':
+            arr_types = []
+            arr_entries = []
+            arr_Values = (Values2[num_of_iterations]['Value'])
+            num_of_arr_iterations = 0
+            arr_types = (re.findall(r'(?<=UAssetAPI\.PropertyTypes\.)[^,]*(?=, UAssetAPI)', str(arr_Values)))
+            for o in arr_types:
+                if o == 'FloatPropertyData':
+                    if 'Value' in arr_Values[num_of_arr_iterations]:
+                        dataentry = str(arr_Values[num_of_arr_iterations]['Value'])
+                        dataentry = dataentry[:6]
+                        dataentry = round(float(dataentry),2)
+                        dataentry = str(dataentry)
+                        if '+' not in dataentry and '-' not in dataentry:
+                            dataentry = '+' + dataentry
+                        arr_entries.append(dataentry)
+                        num_of_arr_iterations += 1
+                if o == 'TextPropertyData':
+                    s = str(arr_Values[num_of_arr_iterations])
+                    infokeys = (re.findall(r'(?<=\')[^\']\w*(?=\'\:)', s))
+                    for i in infokeys:
+                        if 'Value' not in i and '$type' not in i and 'Flags' not in i and 'HistoryType' not in i and 'Namespace' not in i and 'DuplicationIndex' not in i and 'Name' not in i:
+                            textkey = str(i)
+                    if textkey in arr_Values[num_of_arr_iterations]:
+                        arr_entries.append(arr_Values[num_of_arr_iterations][textkey])
+                    num_of_arr_iterations += 1
+                if o == 'ObjectPropertyData':
+                    if 'Value' in arr_Values[num_of_arr_iterations]:
+                        obj_path = import_interpreter(dict1, dict2, int(arr_Values[num_of_arr_iterations]['Value']))
+                        arr_entries.append(obj_path)
+                    num_of_arr_iterations += 1
+                if o == 'BoolPropertyData' or o == 'SoftObjectPropertyData' or o == 'NamePropertyData' or o == 'StrPropertyData' or o == 'IntPropertyData':
+                    if 'Value' in arr_Values[num_of_arr_iterations]:
+                        arr_entries.append(arr_Values[num_of_arr_iterations]['Value'])
+                    num_of_arr_iterations += 1
+            #print(f'Array Types: {arr_types}')
+            #print(f'Array Values: {arr_Values}')
+            #print(f'Array Entries: {arr_entries}')
+            arr_dataentries = ' | '.join(arr_entries)
+            Stats_entries.append(arr_dataentries)
+            num_of_iterations += 1
+            ArrayProperties += 1
+        if k != 'FloatPropertyData' and k != 'TextPropertyData' and k != 'BoolPropertyData' and k != 'SoftObjectPropertyData' and k != 'ObjectPropertyData' and k != 'ArrayPropertyData' and k != 'NamePropertyData' and k != 'VectorPropertyData' and k != 'RotatorPropertyData' and k != 'StrPropertyData' and k != 'IntPropertyData' and k != 'StructPropertyData':
+            print('Error: Unknown property type')
+            print(f'{k} was not recognized\nThis can jeopardize output integrity')
+            num_of_iterations += 1
+    if VectorProperties > 0:
+        print(f'{VectorProperties} VectorProperties can\'t be parsed in a csv')
+    if RotatorProperties > 0:
+        print(f'{RotatorProperties} RotatorProperties can\'t be parsed in a csv')
+    if RotatorProperties > 0 or VectorProperties > 0:
+        print('Properties that can\'t be parsed in a csv will be output as \"N/A\"')
+    #group entries into lists
+    l = len(collumn_names) - 1
+    Stats_entries = [Stats_entries[i:i+l] for i in range(0, len(Stats_entries), l)]
     print('Data extracted and sorted')
     #print(Stats_entries)
     #add Row_names to stats_entries list at the begining of groups
@@ -123,16 +297,21 @@ def datatable_to_csv(json_file,Output):
         writer.writerow(collumn_names)
         for i in Stats_entries:
             writer.writerow(i)
+    print('imports interpreted successfully')
     print('CSV Created')
+
+
+
+
+
 
 import argparse
 def main():
     
-    parser = argparse.ArgumentParser(description='Interprets UE4 data table files and writes them to a csv file')
+    parser = argparse.ArgumentParser(description='Interprets UE4 data table files and writes them to a csv file ; Use UassetGUI to get the json file')
     # action = parser.add_mutually_exclusive_group()
     # action2 = parser.add_mutually_exclusive_group(required=True)
     parser.add_argument('-i', '--input', help='Input file(Json or UAsset)', required=True)
-    parser.add_argument('-d', '--datatable', help='is datatable', action='store_true')
     args = parser.parse_args()
     if args.input:
         input_file = args.input
@@ -140,17 +319,13 @@ def main():
         if file_extension == 'json':
             json_file = input_file
             Output_file = input_file.replace('.json', '.csv')
-            if args.datatable:
-                Type = get_type(json_file)
-                if Type == 'UDataTable':
-                    print('DataTable Found')
-                    datatable_to_csv(json_file, Output_file)
-                else :
-                    print('DataTable Not Found')
-                    exit()
-            else:
-                print('Not a DataTable')
-                print('Please use -d to specify if the file is a datatable')
+            Type = get_type(json_file)
+            if Type == 'UDataTable':
+                print('DataTable Found')
+                dict1, dict2 = import_mapper(json_file)
+                datatable_to_csv(json_file, Output_file)
+            else :
+                print('DataTable Not Found')
                 exit()
         else:
             print('File extension not supported')
